@@ -13,7 +13,7 @@ use Tie::RefHash;
 use vars qw($VERSION);
 use Data::Dumper;
 
-$VERSION = '0.01';
+$VERSION = '0.02';
 
 my @now=localtime(time);
 my $cronCounter=$now[0]+60*$now[1]+3600*$now[2]+3600*24*$now[3];
@@ -79,6 +79,14 @@ sub add {
 			exists $hash->{on_disconnected} ? $hash->{on_disconnected} : sub {};
 	$self->{listen}->{$hash->{server_name}}->{on_recv_msg}=
 			exists $hash->{on_recv_msg} ? $hash->{on_recv_msg} : sub {};
+	$self->{listen}->{$hash->{server_name}}->{on_connected_param}=
+			exists $hash->{on_connected_param} ? $hash->{on_connected_param} 
+				: [];
+	$self->{listen}->{$hash->{server_name}}->{on_disconnected_param}=
+			exists $hash->{on_disconnected_param} ? 
+				$hash->{on_disconnected_param} : [];
+	$self->{listen}->{$hash->{server_name}}->{on_recv_msg_param}=
+			exists $hash->{on_recv_msg_param} ? $hash->{on_recv_msg_param} : [];
 
 	if (exists $hash->{local_address}) {
 		$map_specific{"$hash->{local_address}:$hash->{local_port}"}=
@@ -115,7 +123,8 @@ sub handle {
         		# $request is the text of the request
         		# put text of reply into $outbuffer{$client}
 
-		$self->{listen}->{$server_name}->{on_recv_msg}->($self,$client,$request);
+		$self->{listen}->{$server_name}->{on_recv_msg}->($self,$client,$request,
+			@{$self->{listen}->{$server_name}->{on_recv_msg_param}});
 	}
 
 	delete $ready{$client};
@@ -181,7 +190,8 @@ sub erase_client {
 	delete $outbuffer{$client};
 	delete $ready{$client};
 
-	$self->{listen}->{$server_name}->{on_disconnected}->($self,$client);
+	$self->{listen}->{$server_name}->{on_disconnected}->($self,$client,
+		@{$self->{listen}->{$server_name}->{on_disconnected_param}});
 
 	$select->remove($client);
 	close $client if $client;
@@ -193,7 +203,7 @@ sub start{
 
 	$select = IO::Select->new();
 	foreach (keys %{$self->{listen}}) {
-		print "Listen on ".$self->{listen}->{$_}->{local_address}.":".
+		warn "Listen on ".$self->{listen}->{$_}->{local_address}.":".
 			$self->{listen}->{$_}->{local_port}."\n";
 		$select->add($self->{listen}->{$_}->{socket});
 	}
@@ -256,7 +266,7 @@ sub start{
 
 				$select->add($client);
 				$self->nonblock($client);
-				$self->{listen}->{$server_name}->{on_connected}->($self,$client);
+				$self->{listen}->{$server_name}->{on_connected}->($self,$client,@{$self->{listen}->{$server_name}->{on_connected_param}});
 
 				$idle{$client}=time;
 				$turn_timeout{$client}=-1;
@@ -529,21 +539,21 @@ The "add medthod" has various parameters which means:
 
 	-timeout: to set timeout for idle clients, the default value is 300 or 5 minutes
 
-	-on_connected: call back method for an incoming client, parameters passed to this call back is illustrated with this code:
+	-on_connected: callback method for an incoming client, parameters passed to this callback is illustrated with this code:
 
 		sub {
 			my $self=shift;
 			my $client=shift;
 		}
 
-	- on_disconnected: call back method when a client disconnects
+	- on_disconnected: callback method when a client disconnects
 
 		sub {
 			my $self=shift;
 			my $client=shift;
 		}
 
-	- on_recv_msg: call back method when a client sends a message to server
+	- on_recv_msg: callback method when a client sends a message to server
 
 		sub {
 			my $self=shift;
@@ -551,7 +561,65 @@ The "add medthod" has various parameters which means:
 			my $message=shift;
 		}
 
-If you want to set a timer. You have to do something like this before calling "start" method:
+A disadvange of the design is passing parameters to on_connected,on_disconnected and on_recv_msg. Since these callback function will be activated by this package namespace, the only way to use external parameters is by defining global variable which is not a good aspect to deal with OO implementations. For example:
+
+	sub chess_connected {
+		my $self=shift;
+		my $client=shift;
+
+		#you have to define $move as a global variable..
+		$move=$move+1
+	}
+
+However, if your chess server is written as a class, you might have "$self->{move}". It is generally accepted that $self is autometically pass to methods when they are called, thus it shouldn't defined as a global variable. Consider this:
+
+	package ChessServer;
+
+	sub new {
+		my $class=shift;
+		my $self={};
+		$self->{server}=Net::Server::NonBlocking->new();
+		$self->{move}=0;
+
+		# blablabla
+
+		bless $self,$class;
+	}
+
+You won't get $self->{move} or $self->{xxxxx}, since $self is not global. Nevertheless, you can build your class by inheriting from this module you can solve the problem, but someone might said "I do not want to inherit from this class", so I've provided three parameters of the "add methods" to be able to pass external parameters.
+
+	- on_connected_param
+
+	- on_disconnected_param
+
+	_ on_recv_msg_param
+
+For example:
+
+	$self->{server}->add({
+				server_name => 'chess',
+				local_address => $public_ip,
+				local_port => $public_port,
+				timout => 60,
+				on_connected => \&chess_connected,
+				on_disconnected => \&chess_disconnected,
+				on_recv_msg => \&chess_msg,
+				on_connected_param => [\$self,\%blablabla],
+			});
+
+And in the chess_connected, the parameters is passed like this
+
+	sub chess_connected {
+		my $self=shift;
+		my $client=shift;
+		my $chess=${$_[0]};
+		my %blablalba=%{$_[1]};
+	}
+
+Does this approach mitigate the problem? I don't know !!!
+
+
+By the way, if you want to set a timer. You have to do something like this before calling "start" method:
 
 	$obj->cron(30,sub {
 			my $self=shift;
@@ -610,13 +678,16 @@ IO::Multiplex -- I/O Multiplexing server style, the only little thing that diffe
 
 Net::Server -- another server engine implementations such as forking, preforking or multiplexing
 
+=head1 PLATFORM
+
+Currently, only unix. It has been tested on Linux with perl5.8.0.
+Win32 platform should be supported in the future.
+
 =head1 AUTHOR
 
 Komtanoo  Pinpimai <romerun@romerun.com>
 
 =head1 COPYRIGHT AND LICENSE
-
-Copyright 2002 by root
 
 Copyright 2002 (c) Komtanoo  Pinpimai <romerun@romerun.com>. All rights reserved. 
 
