@@ -13,7 +13,7 @@ use Tie::RefHash;
 use vars qw($VERSION);
 use Data::Dumper;
 
-$VERSION = '0.047';
+$VERSION = '0.048';
 
 my @now=localtime(time);
 my $cronCounter=$now[0]+60*$now[1]+3600*$now[2]+3600*24*$now[3];
@@ -508,7 +508,8 @@ sub onSheddo{
 
     foreach (sort {$a <=> $b} keys %timer) {
 	unless ($cronCounter % $_) {
-	    &{shift @{$timer{$_}}}($self,@{$timer{$_}});
+	    my $count=@{$timer{$_}};
+	    &{$timer{$_}->[0]}($self,@{$timer{$_}}[1..($count-1)]);
 	}
     }
 
@@ -539,7 +540,7 @@ Net::Server::NonBlocking - An object interface to non-blocking I/O server engine
 
 =head1 VERSION
 
-0.47
+0.48
 
 =head1 SYNOPSIS
 
