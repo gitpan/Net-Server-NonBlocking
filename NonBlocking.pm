@@ -13,7 +13,7 @@ use Tie::RefHash;
 use vars qw($VERSION);
 use Data::Dumper;
 
-$VERSION = '0.041';
+$VERSION = '0.042';
 
 my @now=localtime(time);
 my $cronCounter=$now[0]+60*$now[1]+3600*$now[2]+3600*24*$now[3];
@@ -31,7 +31,8 @@ my %idle;
 my %timer;
 my %map_all;
 my %map_specific;
-my %map_sock;
+my %map_server;
+my %map_client;
 
 tie %ready, 'Tie::RefHash';
 
@@ -51,66 +52,99 @@ sub add {
     my $hash=shift;
 
     die("server_name is required") if not exists $hash->{server_name};
-    die("local_port is required") if not exists $hash->{local_port};
+    
+    if (not exists $hash->{local_port}) {
+	$self->{listen}->{$hash->{server_name}}->{delimiter}=
+	    exists $hash->{delimiter} ? $hash->{delimiter} : "\0";
+	$self->{listen}->{$hash->{server_name}}->{string_format}=
+	    exists $hash->{string_format} ? $hash->{string_format} : '.*?';
+	$self->{listen}->{$hash->{server_name}}->{timeout}=
+	    exists $hash->{timeout} ? $hash->{timeout} : 300;
+	$self->{listen}->{$hash->{server_name}}->{on_disconnected}=
+	    exists $hash->{on_disconnected} ? $hash->{on_disconnected} : sub {};
+	$self->{listen}->{$hash->{server_name}}->{on_recv_msg}=
+	    exists $hash->{on_recv_msg} ? $hash->{on_recv_msg} : sub {};
+	$self->{listen}->{$hash->{server_name}}->{read_buffer} = 
+	    exists $hash->{read_buffer} ? $hash->{read_buffer} : \&read_buffer;
+	$self->{listen}->{$hash->{server_name}}->{on_disconnected_param}=
+	    exists $hash->{on_disconnected_param} ? $hash->{on_disconnected_param} : [];
+	$self->{listen}->{$hash->{server_name}}->{on_recv_msg_param}=
+	    exists $hash->{on_recv_msg_param} ? $hash->{on_recv_msg_param} : [];
 
-    my $server;
-
-    if (exists $hash->{local_address}) {
-	$server = IO::Socket::INET->new(
-					LocalAddr => $hash->{local_address},
-					LocalPort => $hash->{local_port},
-					Listen    => 50,
-					Proto	=> 'tcp',
-					Reuse	=> 1,
-					Blocking => 0)
-	    or die "Can't make server socket -- $@\n";
+	return undef;
     } else {
-	$server = IO::Socket::INET->new(
-					LocalPort => $hash->{local_port},
-					Listen    => 50,
-					Proto	=> 'tcp',
-					Reuse	=> 1,
-					Blocking => 0)
-	    or die "Can't make server socket -- $@\n";
+	my $server;
+
+	if (exists $hash->{local_address}) {
+	    $server = IO::Socket::INET->new(
+					    LocalAddr => $hash->{local_address},
+					    LocalPort => $hash->{local_port},
+					    Listen    => 50,
+					    Proto	=> 'tcp',
+					    Reuse	=> 1,
+					    Blocking => 0)
+		or die "Can't make server socket -- $@\n";
+	} else {
+	    $server = IO::Socket::INET->new(
+					    LocalPort => $hash->{local_port},
+					    Listen    => 50,
+					    Proto	=> 'tcp',
+					    Reuse	=> 1,
+					    Blocking => 0)
+		or die "Can't make server socket -- $@\n";
+	}
+	$self->nonblock($server);
+
+	$self->{listen}->{$hash->{server_name}}->{socket}=$server;
+	$self->{listen}->{$hash->{server_name}}->{local_address}=$hash->{local_address} || "localhost";
+	$self->{listen}->{$hash->{server_name}}->{local_port}=$hash->{local_port};
+	$self->{listen}->{$hash->{server_name}}->{delimiter}=
+	    exists $hash->{delimiter} ? $hash->{delimiter} : "\0";
+	$self->{listen}->{$hash->{server_name}}->{string_format}=
+	    exists $hash->{string_format} ? $hash->{string_format} : '.*?';
+	$self->{listen}->{$hash->{server_name}}->{timeout}=
+	    exists $hash->{timeout} ? $hash->{timeout} : 300;
+	$self->{listen}->{$hash->{server_name}}->{on_connected}=
+	    exists $hash->{on_connected} ? $hash->{on_connected} : sub {};
+	$self->{listen}->{$hash->{server_name}}->{on_disconnected}=
+	    exists $hash->{on_disconnected} ? $hash->{on_disconnected} : sub {};
+	$self->{listen}->{$hash->{server_name}}->{on_recv_msg}=
+	    exists $hash->{on_recv_msg} ? $hash->{on_recv_msg} : sub {};
+	$self->{listen}->{$hash->{server_name}}->{read_buffer} = 
+	    exists $hash->{read_buffer} ? $hash->{read_buffer} : \&read_buffer;
+	$self->{listen}->{$hash->{server_name}}->{on_connected_param}=
+	    exists $hash->{on_connected_param} ? $hash->{on_connected_param} : [];
+	$self->{listen}->{$hash->{server_name}}->{on_disconnected_param}=
+	    exists $hash->{on_disconnected_param} ? $hash->{on_disconnected_param} : [];
+	$self->{listen}->{$hash->{server_name}}->{on_recv_msg_param}=
+	    exists $hash->{on_recv_msg_param} ? $hash->{on_recv_msg_param} : [];
+
+	if (exists $hash->{local_address}) {
+	    $map_specific{"$hash->{local_address}:$hash->{local_port}"}=
+		$hash->{server_name};
+	} else {
+	    $map_all{$hash->{local_port}}=
+		$hash->{server_name};
+	}
+
+	$map_server{$server} = $hash->{server_name};
+
+	return $server;
     }
-    $self->nonblock($server);
+}
 
-    $self->{listen}->{$hash->{server_name}}->{socket}=$server;
-    $self->{listen}->{$hash->{server_name}}->{local_address}=$hash->{local_address} || "localhost";
-    $self->{listen}->{$hash->{server_name}}->{local_port}=$hash->{local_port};
-    $self->{listen}->{$hash->{server_name}}->{delimiter}=
-	exists $hash->{delimiter} ? $hash->{delimiter} : "\0";
-    $self->{listen}->{$hash->{server_name}}->{string_format}=
-	exists $hash->{string_format} ? $hash->{string_format} : '.*?';
-    $self->{listen}->{$hash->{server_name}}->{timeout}=
-	exists $hash->{timeout} ? $hash->{timeout} : 300;
-    $self->{listen}->{$hash->{server_name}}->{on_connected}=
-	exists $hash->{on_connected} ? $hash->{on_connected} : sub {};
-    $self->{listen}->{$hash->{server_name}}->{on_disconnected}=
-	exists $hash->{on_disconnected} ? $hash->{on_disconnected} : sub {};
-    $self->{listen}->{$hash->{server_name}}->{on_recv_msg}=
-	exists $hash->{on_recv_msg} ? $hash->{on_recv_msg} : sub {};
-    $self->{listen}->{$hash->{server_name}}->{read_buffer} = 
-	exists $hash->{read_buffer} ? $hash->{read_buffer} : \&read_buffer;
-    $self->{listen}->{$hash->{server_name}}->{on_connected_param}=
-	exists $hash->{on_connected_param} ? $hash->{on_connected_param} : [];
-    $self->{listen}->{$hash->{server_name}}->{on_disconnected_param}=
-	exists $hash->{on_disconnected_param} ? 
-	$hash->{on_disconnected_param} : [];
-    $self->{listen}->{$hash->{server_name}}->{on_recv_msg_param}=
-	exists $hash->{on_recv_msg_param} ? $hash->{on_recv_msg_param} : [];
+sub bind {
+    my $self=shift;
+    my $server_name=shift;
+    my $client=shift;
 
-    if (exists $hash->{local_address}) {
-	$map_specific{"$hash->{local_address}:$hash->{local_port}"}=
-	    $hash->{server_name};
-    } else {
-	$map_all{$hash->{local_port}}=
-	    $hash->{server_name};
-    }
+    $select->add($client);
+    $self->nonblock($client);
 
-    $map_sock{$server} = $hash->{server_name};
+    $idle{$client}=time;
+    $turn_timeout{$client}=-1;
 
-    return $server;
+    $map_client{$client}=$server_name;
 }
 
 sub nonblock {
@@ -153,14 +187,15 @@ sub get_server_socket {
 sub get_server_name {
     my $self=shift;
     my $client=shift;
-    my @caller=caller();
+    #my @caller=caller();
 
-    return $map_sock{$client} if exists $map_sock{$client};
-
+    return $map_server{$client} if exists $map_server{$client};
+    return $map_client{$client} if exists $map_client{$client};
+    
     if (exists $map_specific{$client->sockhost().":".$client->sockport()}) {
-	return $map_specific{$client->sockhost().":".$client->sockport()};
+        return $map_specific{$client->sockhost().":".$client->sockport()};
     } else {
-	return $map_all{$client->sockport()};
+        return $map_all{$client->sockport()};
     }
 }
 
@@ -181,21 +216,74 @@ sub reset_turn {
     delete($turn_timeout_trigger{$client});
 }
 
-sub close_client {
+#sub flush_input {
+#    my $self=shift;
+#    my $client=shift;
+#    my $server_name=$self->get_server_name($client);
+#
+#    my $rin='';
+#    vec($rin,fileno($client),1)=1;
+#
+#    select(my $rout=$rin,undef,undef,0);
+#
+#    if (vec($rout,fileno($client),1)) {
+#	my $data = '';
+#	my $rv = $client->recv($data, POSIX::BUFSIZ, 0);
+#		
+#	unless (defined($rv) && length $data) {
+#	    # This would be the end of file, so close the client
+#	    $self->erase_client($server_name,$client);
+#	    next;
+#	}
+#
+#	$inbuffer{$client} .= $data;
+#	$self->{listen}->{$server_name}->{read_buffer}->($self,\$inbuffer{$client},\$ready{$client},$server_name);
+#
+#	$idle{$client}=time;
+#    }
+#
+#    $self->handle($server_name,$client);
+#}
+
+sub flush_output {
     my $self=shift;
     my $client=shift;
+    my $server_name=$self->get_server_name($client);
 
-    #print "Idle delete close_client $client\n"; 
+    return unless length $outbuffer{$client}; 
 
-    delete $turn_timeout{$client};
-    delete $turn_timeout_trigger{$client};
-    delete $idle{$client};
-    delete $inbuffer{$client};
-    delete $outbuffer{$client};
-    delete $ready{$client};
+    my $rin='';
+    vec($rin,fileno($client),1)=1;
 
-    $select->remove($client);
-    close $client if $client;
+    select(undef,my $rout=$rin,undef,0);
+
+    if (vec($rout,fileno($client),1)) {
+	while ($outbuffer{$client}) {
+	    my $rv;
+
+	    eval{
+		$rv = $client->send($outbuffer{$client}, 0);
+	    };
+	    return if $@;   #the $client is disconnected
+
+	    unless (defined $rv) {
+		# Whine, but move on.
+		
+		warn "I was told I could write, but I can't.\n";
+		next;
+	    }
+
+	    if ( $rv == length $outbuffer{$client}) { ## || $! == POSIX::EWOULDBLOCK) {
+		substr($outbuffer{$client}, 0, $rv) = '';
+		delete $outbuffer{$client} unless length $outbuffer{$client};
+	    } else {
+		# Couldn't write all the data
+
+		substr($outbuffer{$client}, 0,$rv,'') if defined $rv;
+		delete $outbuffer{$client} unless length $outbuffer{$client};
+	    }
+	}
+    }
 }
 
 sub erase_client {
@@ -244,6 +332,7 @@ sub start{
 
     $select = IO::Select->new();
     foreach (keys %{$self->{listen}}) {
+	next unless $self->{listen}->{$_}->{local_port};
 	warn "Listen on ".$self->{listen}->{$_}->{local_address}.":".
 	    $self->{listen}->{$_}->{local_port}."\n";
 	$select->add($self->{listen}->{$_}->{socket});
@@ -262,7 +351,7 @@ sub start{
 	my $this_time=time;
 	if ($current_time != $this_time) {
 	    foreach $client($select->handles) {
-		next if exists $map_sock{$client};
+		next if exists $map_server{$client};
 
 		if ($turn_timeout{$client} != -1) {
 		    if ($turn_timeout{$client} <= 0) {
@@ -282,7 +371,7 @@ sub start{
 	#timeout the Idles
 
 	foreach $client ($select->handles) {
-	    next if exists $map_sock{$client};
+	    next if exists $map_server{$client};
 	    my $server_name=$self->get_server_name($client);
 
 	    my $this_time=time;
@@ -296,7 +385,7 @@ sub start{
 	# anything to read or accept?
 	foreach $client ($select->can_read(1)) {
 	    my $server_name=$self->get_server_name($client);
-	    if (exists $map_sock{$client}) {
+	    if (exists $map_server{$client}) {
 		# accept a new connection
 		$client = $self->{listen}->{$server_name}->{socket}->accept();
 		unless ($client) {
@@ -417,7 +506,7 @@ Net::Server::NonBlocking - An object interface to non-blocking I/O server engine
 
 =head1 VERSION
 
-0.41
+0.42
 
 =head1 SYNOPSIS
 
@@ -454,7 +543,7 @@ This module is not state-of-the-art of non-blocking server, it consumes some add
 
 =head1 LIMITATION
 
-At present, the module handles with concurrency by "select", which limits the number of clients that it can hold(In my linux box(kernel 2.4.18-14) the number is approximately 512). There are 3 choices I'm thinking of, use poll instead, handle multiple IO::Select objects, or leave this limititation unchange.
+At present, the module handles concurrency with "select"(to eschew waste polling), which limits the number of clients that it can hold(In my linux box(kernel 2.4.18-14) the number is approximately 512). There are 3 choices I'm thinking of, use poll instead, handle multiple of IO::Select objects, or leave this limititation unchange.
 
 =head1 FEATURES
 
@@ -474,7 +563,112 @@ Clients that are idle(sending nothing) in server for a configurable period will 
 
 The meaning of this feature is hard to explain without stimulating a case. Supposing that you write a multi-player turn-based checker server, you have to limit the times that each users spend before sending their move which can easily achieve by client side clock, however, it is not secure. That's why I have to write this feature.
 
-=head2 USAGE
+=head1 METHOD
+
+=over 1
+
+=item C<new ([$hash_ref])>
+
+$hash_ref->{pidfile}
+    location where pid will be kept default is /tmp/anonymous_server
+
+=item C<add ($hash_ref)>
+
+hash two mode. If $hash_ref->{localport} is given, the module will initialize a server socket binding to IO::Select object. If not the module initialize server information without creating server socket.
+(See USAGE for all $hash_ref's key & value)
+
+=item C<bind ($server_name,$user_define_socket)>
+
+to bind a socket, which is not the client of your listening server, to the server_name.
+
+The usage of this function is while you are processing some messages, you create a client socket to somewhere and you would like the module to handle this socket for you like server socket. For example:
+
+$obj=Net::Server::NonBlocking->new;
+
+$obj->add({
+    server_name => 'tic tac toe',
+    local_port => 10000,
+    timeout => 60,
+    delimiter => "\r\n",
+    on_connected => \&ttt_connected,
+    on_disconnected => \&ttt_disconnected,
+    on_recv_msg => \&ttt_message
+});
+
+$obj->add({
+    server_name => 'user socket',
+    timeout => 60,
+    delimiter => "\0",
+    on_disconnected => \&user_disconnected,
+    on_recv_msg => \&user_message
+});
+
+$obj->start;          
+
+sub ttt_message {
+    my $self=shift;
+    my $client=shift;
+    my $data=shift;
+
+    if ($data eq 'connect') {
+	my $sock = IO::Socket::INET->new(PeerAddr => '192.168.3.209',
+				      PeerPort => '3456',
+				      Proto    => 'tcp');
+	$self->bind('user socket',$sock);
+    }
+}  
+
+sub user_message {
+    my $self=shift;
+    my $client=shift;
+    my $data=shift;
+
+    $self->enqueue($client,"send something to 192.168.3.209\0");
+}
+
+sub user_disconnected {
+    
+}
+
+=item C<get_server_socket ($server_name)>
+
+return $socket of the given server_name
+
+=item C<get_server_name ($client)>
+
+return server_name of the given $client
+
+=item C<start_turn($client, $second, \&code)>
+
+start count down from $second to zero, if zero is reached the module will activate the code with $self and $client as parameters. (see usage for more information)
+
+=item C<reset_turn($client)>
+
+stop the count down process
+
+=item C<flush_output($client)>
+
+send all data in out buffer queue, this operation can be blocked, if the $client is not available for writing.
+
+=item C<erase_client($server_name,$client)>
+
+erase the $client from the responsibility of the module.
+
+=item C<enqueue($client,$data)>
+
+to append the out buffer of the client with $data which will be transmit to the client later in the apropriate time.
+
+=item C<start()>
+
+start listening all added socket server.
+
+=item C<cron($second,$code)>
+
+to activate the $code every $second seconds.
+
+=back
+
+=head1 USAGE
 
 Even though, the module make it easy to build a non-blocking I/O server, but I don't expect you to remeber all its usages. Here is the template to build a server:
 
@@ -678,8 +872,19 @@ or
 or
         $self->enqueue($client,$data);   # put data to non-block output queue, most efficient !?
 
-**caution: dont mix $self->enqueue with the other methods, unless unexpected results will occur.
+**caution: don't mix $self->enqueue with the other methods, unless unexpected results will occur.
 
+**caution: enqueue doesn't send messages instantly, but queue messages to output queue. It can raise unexpected result, if you code something like this:
+
+    $self->enqueue($client,$data);
+    $self->erase_client($server_name,$client);
+    # $data won't be sent to the $client, since after the data is put to the output queue, the client is disconnected.
+
+which can be solve by flush_output method like this:
+
+    $self->enqueue($client,$data);
+    $self->flush_output($client);   #send all output_queue to $client
+    $self->erase_client($server_name,$client);
 
 
 Let's me introduce a callback function which make the module support broader TCP protocols.
@@ -699,7 +904,6 @@ It is:
 	}
     }
 
-
 By default, if you don't provide "read_buffer" parameter to the "add" function, your buffer_fetching mechanism will be the code above. The problem is that the default buffer fetching machanism is designed to work with protocols ended with some delimiters in each message, so if my protocol send a content-length appended with \r\n and the next is data which length is equal to the content-length, the subroutine will not work. It has to be modified something like this:
 
      $obj->add({
@@ -708,18 +912,18 @@ By default, if you don't provide "read_buffer" parameter to the "add" function, 
               read_buffer => \&my_buffer_reader
           });
 
-    sub buffer_fetch {
-        my $self=shift;
-        my $raw_input=shift;
-        my $cooked_input=shift;
-        my $server_name=shift;
+     sub my_buffer_reader {
+	 my $self=shift;
+	 my $raw_input=shift;
+	 my $cooked_input=shift;
+	 my $server_name=shift;
 
-        for (;;) {
-            last unless $$raw_input =~ m/Content-length: (\d+)\n/;
-            last unless $$raw_input =~ s/Content-length: $1\n(.{$1})//s;
-            push (@{$$cooked_input}, $1);
-        }
-    }
+	 for (;;) {
+	     last unless $$raw_input =~ m/Content-length: (\d+)\r\n/;
+	     last unless $$raw_input =~ s/Content-length: $1\r\n(.{$1})//s;
+	     push (@{$$cooked_input}, $1);
+         }
+     }
 
 ** $raw_input is reference to input buffer the current client
 ** $cooked_input is reference to array reference of the current client incoming messages passed to on_recv_msg
@@ -779,9 +983,9 @@ To get socket from each added server, inorder to set its property, for example:
 
         $sock=$self->get_server_socket($server_name);
         setsockopt($sock,SOL_SOCKET,SO_KEEPALIVE,1);
-        setsockopt($sock,IPPROTO_TCP,TCP_KEEPALIVE,120);
+        setsockopt($sock,IPPROTO_TCP,&TCP_KEEPALIVE,120);
 
-=head2 EXPORT
+=head1 EXPORT
 
 None
 
