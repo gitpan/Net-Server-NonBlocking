@@ -13,7 +13,7 @@ use Tie::RefHash;
 use vars qw($VERSION);
 use Data::Dumper;
 
-$VERSION = '0.02';
+$VERSION = '0.03';
 
 my @now=localtime(time);
 my $cronCounter=$now[0]+60*$now[1]+3600*$now[2]+3600*24*$now[3];
@@ -53,19 +53,28 @@ sub add {
 	die("server_name is required") if not exists $hash->{server_name};
 	die("local_port is required") if not exists $hash->{local_port};
 
-	my $server = IO::Socket::INET->new(
-			LocalAddr => exists $hash->{local_address} ? 
-					$hash->{local_address} : 'localhost',
-			LocalPort => $hash->{local_port},
-			Listen    => 50,
-			Proto	=> 'tcp',
-			Reuse	=> 1)
-	  or die "Can't make server socket -- $@\n";
+	my $server;
+
+	if (exists $hash->{local_address}) {
+		$server = IO::Socket::INET->new(
+				LocalAddr => $hash->{local_address},
+				LocalPort => $hash->{local_port},
+				Listen    => 50,
+				Proto	=> 'tcp',
+				Reuse	=> 1)
+			or die "Can't make server socket -- $@\n";
+	} else {
+		$server = IO::Socket::INET->new(
+				LocalPort => $hash->{local_port},
+				Listen    => 50,
+				Proto	=> 'tcp',
+				Reuse	=> 1)
+			or die "Can't make server socket -- $@\n";
+	}
 	$self->nonblock($server);
 
 	$self->{listen}->{$hash->{server_name}}->{socket}=$server;
-	$self->{listen}->{$hash->{server_name}}->{local_address}=
-			exists $hash->{local_address} ? $hash->{local_address} : 'localhost';
+	$self->{listen}->{$hash->{server_name}}->{local_address}=$hash->{local_address};
 	$self->{listen}->{$hash->{server_name}}->{local_port}=$hash->{local_port};
 	$self->{listen}->{$hash->{server_name}}->{delimiter}=
 			exists $hash->{delimiter} ? $hash->{delimiter} : "\0";
@@ -663,6 +672,10 @@ Let's see another usage for turn timer:
             }
         }
 
+
+To disconnect a client from a server, just call
+
+	$self->erase_client($server_name,$client);
 
 =head2 EXPORT
 
