@@ -13,7 +13,7 @@ use Tie::RefHash;
 use vars qw($VERSION);
 use Data::Dumper;
 
-$VERSION = '0.045';
+$VERSION = '0.047';
 
 my @now=localtime(time);
 my $cronCounter=$now[0]+60*$now[1]+3600*$now[2]+3600*24*$now[3];
@@ -26,7 +26,7 @@ my %ready = ();
 
 my %turn_timeout;
 my %turn_timeout_trigger;
-my $select;
+my $select = IO::Select->new();
 my %idle;
 my %timer;
 my %map_all;
@@ -355,7 +355,6 @@ sub start{
     my $self=shift;
     my $current_time=time;
 
-    $select = IO::Select->new();
     foreach (keys %{$self->{listen}}) {
 	next unless $self->{listen}->{$_}->{local_port};
 	warn "Listen on ".$self->{listen}->{$_}->{local_address}.":".
@@ -509,7 +508,7 @@ sub onSheddo{
 
     foreach (sort {$a <=> $b} keys %timer) {
 	unless ($cronCounter % $_) {
-	    &{$timer{$_}}($self);
+	    &{shift @{$timer{$_}}}($self,@{$timer{$_}});
 	}
     }
 
@@ -518,8 +517,10 @@ sub onSheddo{
 
 sub cron {
     my $self=shift;
-	
-    $timer{$_[0]}=$_[1];
+    my $sec=shift;
+    my $sub=shift;
+
+    $timer{$sec}=[$sub,@_];
 }
 
 sub select {
@@ -538,7 +539,7 @@ Net::Server::NonBlocking - An object interface to non-blocking I/O server engine
 
 =head1 VERSION
 
-0.45
+0.47
 
 =head1 SYNOPSIS
 
@@ -690,7 +691,7 @@ to append the out buffer of the client with $data which will be transmit to the 
 
 start listening all added socket server.
 
-=item C<cron($second,$code)>
+=item C<cron($second,$code,[@param])>
 
 to activate the $code every $second seconds.
 
@@ -970,7 +971,7 @@ Anyway, if you want to set a timer. You have to do something like this before ca
 	$obj->cron(30,sub {
 			my $self=shift;
 			#do something
-		});
+		},@param);
 
 30 is seconds that the CODE will be triggered.
 For setting turn timeout:
@@ -978,6 +979,7 @@ For setting turn timeout:
 	$obj->start_turn($client,$limit_time, sub {
 						my $self=shift;
 						my $client=shift;
+						my @param=@_;
 
 						# mark this client as the loser
 					};
