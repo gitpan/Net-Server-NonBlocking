@@ -13,7 +13,7 @@ use Tie::RefHash;
 use vars qw($VERSION);
 use Data::Dumper;
 
-$VERSION = '0.044';
+$VERSION = '0.045';
 
 my @now=localtime(time);
 my $cronCounter=$now[0]+60*$now[1]+3600*$now[2]+3600*24*$now[3];
@@ -33,6 +33,7 @@ my %map_all;
 my %map_specific;
 my %map_server;
 my %map_client;
+my %alive;
 
 tie %ready, 'Tie::RefHash';
 
@@ -141,6 +142,7 @@ sub bind {
     $select->add($client);
     $self->nonblock($client);
 
+    $alive{$client}=1;
     $idle{$client}=time;
     $turn_timeout{$client}=-1;
 
@@ -292,12 +294,14 @@ sub close_client {
 
     #print "Idle delete close_client $client\n";
 
+    delete $alive{$client};
     delete $turn_timeout{$client};
     delete $turn_timeout_trigger{$client};
     delete $idle{$client};
     delete $inbuffer{$client};
     delete $outbuffer{$client};
     delete $ready{$client};
+    delete $map_client{$client} if exists $map_client{$client};
 
     $select->remove($client);
     close $client if $client;
@@ -308,12 +312,14 @@ sub erase_client {
     my $server_name=shift;
     my $client=shift;
 
+    delete $alive{$client};
     delete $turn_timeout{$client};
     delete $turn_timeout_trigger{$client};
     delete $idle{$client};
     delete $inbuffer{$client};
     delete $outbuffer{$client};
     delete $ready{$client};
+    delete $map_client{$client} if exists $map_client{$client};
 
     $self->{listen}->{$server_name}->{on_disconnected}->($self,$client,@{$self->{listen}->{$server_name}->{on_disconnected_param}});
 
@@ -325,6 +331,8 @@ sub enqueue {
     my $self=shift;
     my $client=shift;
     my $data=shift;
+
+    return unless $client and $data;
 
     $outbuffer{$client}.=$data;
 }
@@ -369,6 +377,7 @@ sub start{
 	if ($current_time != $this_time) {
 	    foreach $client($select->handles) {
 		next if exists $map_server{$client};
+		next unless exists $alive{$client};
 
 		if ($turn_timeout{$client} != -1) {
 		    if ($turn_timeout{$client} <= 0) {
@@ -389,6 +398,8 @@ sub start{
 
 	foreach $client ($select->handles) {
 	    next if exists $map_server{$client};
+	    next unless exists $alive{$client};
+
 	    my $server_name=$self->get_server_name($client);
 
 	    my $this_time=time;
@@ -401,8 +412,8 @@ sub start{
 
 	# anything to read or accept?
 	foreach $client ($select->can_read(1)) {
-	    my $server_name=$self->get_server_name($client);
 	    if (exists $map_server{$client}) {
+		my $server_name=$self->get_server_name($client);
 		# accept a new connection
 		$client = $self->{listen}->{$server_name}->{socket}->accept();
 		unless ($client) {
@@ -413,11 +424,13 @@ sub start{
 		$select->add($client);
 		$self->nonblock($client);
 
+		$alive{$client}=1;
 		$self->{listen}->{$server_name}->{on_connected}->($self,$client,@{$self->{listen}->{$server_name}->{on_connected_param}});
-
 		$idle{$client}=time;
 		$turn_timeout{$client}=-1;
 	    } else {
+		next unless exists $alive{$client};
+		my $server_name=$self->get_server_name($client);
 		# read data
 
 		$data = '';
@@ -446,6 +459,8 @@ sub start{
 
 	# Buffers to flush?
 	foreach $client ($select->can_write(1)) {
+	    next unless exists $alive{$client};
+
 	    my $server_name=$self->get_server_name($client);
 	    
 	    # Skip this client if we have nothing to say
@@ -523,7 +538,7 @@ Net::Server::NonBlocking - An object interface to non-blocking I/O server engine
 
 =head1 VERSION
 
-0.44
+0.45
 
 =head1 SYNOPSIS
 
