@@ -13,7 +13,7 @@ use Tie::RefHash;
 use vars qw($VERSION);
 use Data::Dumper;
 
-$VERSION = '0.042';
+$VERSION = '0.043';
 
 my @now=localtime(time);
 my $cronCounter=$now[0]+60*$now[1]+3600*$now[2]+3600*24*$now[3];
@@ -286,6 +286,23 @@ sub flush_output {
     }
 }
 
+sub close_client {
+    my $self=shift;
+    my $client=shift;
+
+    #print "Idle delete close_client $client\n";
+
+    delete $turn_timeout{$client};
+    delete $turn_timeout_trigger{$client};
+    delete $idle{$client};
+    delete $inbuffer{$client};
+    delete $outbuffer{$client};
+    delete $ready{$client};
+
+    $select->remove($client);
+    close $client if $client;
+}
+
 sub erase_client {
     my $self=shift;
     my $server_name=shift;
@@ -506,7 +523,7 @@ Net::Server::NonBlocking - An object interface to non-blocking I/O server engine
 
 =head1 VERSION
 
-0.42
+0.43
 
 =head1 SYNOPSIS
 
@@ -650,10 +667,6 @@ stop the count down process
 
 send all data in out buffer queue, this operation can be blocked, if the $client is not available for writing.
 
-=item C<erase_client($server_name,$client)>
-
-erase the $client from the responsibility of the module.
-
 =item C<enqueue($client,$data)>
 
 to append the out buffer of the client with $data which will be transmit to the client later in the apropriate time.
@@ -665,6 +678,14 @@ start listening all added socket server.
 =item C<cron($second,$code)>
 
 to activate the $code every $second seconds.
+
+=item C<erase_client($server_name,$client)>
+
+erase the $client from the responsibility of the module. It also activate on_disconnected callback and close $client socket.
+
+=item C<close_client($server_name,$client)>
+
+erase the $client from the responsibility of the module. It closes $client socket without activate on_disconnected callback.
 
 =back
 
