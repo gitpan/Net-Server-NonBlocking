@@ -13,7 +13,7 @@ use Tie::RefHash;
 use vars qw($VERSION);
 use Data::Dumper;
 
-$VERSION = '0.03';
+$VERSION = '0.031';
 
 my @now=localtime(time);
 my $cronCounter=$now[0]+60*$now[1]+3600*$now[2]+3600*24*$now[3];
@@ -74,7 +74,7 @@ sub add {
 	$self->nonblock($server);
 
 	$self->{listen}->{$hash->{server_name}}->{socket}=$server;
-	$self->{listen}->{$hash->{server_name}}->{local_address}=$hash->{local_address};
+	$self->{listen}->{$hash->{server_name}}->{local_address}=$hash->{local_address} || "localhost";
 	$self->{listen}->{$hash->{server_name}}->{local_port}=$hash->{local_port};
 	$self->{listen}->{$hash->{server_name}}->{delimiter}=
 			exists $hash->{delimiter} ? $hash->{delimiter} : "\0";
