@@ -13,7 +13,7 @@ use Tie::RefHash;
 use vars qw($VERSION);
 use Data::Dumper;
 
-$VERSION = '0.043';
+$VERSION = '0.044';
 
 my @now=localtime(time);
 my $cronCounter=$now[0]+60*$now[1]+3600*$now[2]+3600*24*$now[3];
@@ -273,7 +273,7 @@ sub flush_output {
 		next;
 	    }
 
-	    if ( $rv == length $outbuffer{$client}) { ## || $! == POSIX::EWOULDBLOCK) {
+	    if ( $rv == length $outbuffer{$client}  || $! == POSIX::EWOULDBLOCK) {
 		substr($outbuffer{$client}, 0, $rv) = '';
 		delete $outbuffer{$client} unless length $outbuffer{$client};
 	    } else {
@@ -463,7 +463,7 @@ sub start{
 		next;
 	    }
 
-	    if ( $rv == length $outbuffer{$client}) { ## || $! == POSIX::EWOULDBLOCK) {
+	    if ( $rv == length $outbuffer{$client} || $! == POSIX::EWOULDBLOCK) {
 		substr($outbuffer{$client}, 0, $rv) = '';
 		delete $outbuffer{$client} unless length $outbuffer{$client};
 	    } else {
@@ -523,7 +523,7 @@ Net::Server::NonBlocking - An object interface to non-blocking I/O server engine
 
 =head1 VERSION
 
-0.43
+0.44
 
 =head1 SYNOPSIS
 
